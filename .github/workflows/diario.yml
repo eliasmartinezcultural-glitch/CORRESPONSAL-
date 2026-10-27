@@ -33,13 +33,14 @@ jobs:
       - name: Descargar el proyecto
         uses: actions/checkout@v4
 
-      - name: Leer y filtrar fuentes RSS públicas
+      - name: Leer fuentes públicas y construir la edición
         shell: python
         run: |
           import json, re, hashlib, urllib.request, xml.etree.ElementTree as ET
           from datetime import datetime, timezone
           from email.utils import parsedate_to_datetime
           from html import unescape
+          from html.parser import HTMLParser
           from pathlib import Path
           import unicodedata
 
@@ -49,18 +50,46 @@ jobs:
             ("Turismo", "Neuquén Informa · Turismo", "https://www.neuqueninforma.gob.ar/rss/turismo/"),
             ("Educación", "Neuquén Informa · Educación", "https://www.neuqueninforma.gob.ar/rss/educacion/"),
           ]
-          # Filtro conservador; no equivale a verificación humana.
+          LOCAL_HOME = "https://chanardigital.com.ar/"
           BLOCK = re.compile(r"\\b(polic[ií]a|policial|homicidio|asesinato|violaci[oó]n|detuvieron|detenido|allanamiento|robo|asalto|choque|accidente|muert[oa]s?|falleci[oó]|herid[oa]s?|violencia|delito|droga|narcotr[aá]fico|arma|disparo|petr[oó]leo|fracking|vaca muerta|partido pol[ií]tico|campa[nñ]a electoral|candidato|elecciones|elecci[oó]n)\\b", re.I)
+
           def clean(s):
             return re.sub(r"\\s+", " ", unescape(re.sub(r"<[^>]+>", " ", s or ""))).strip()
+
           def norm(s):
             return "".join(c for c in unicodedata.normalize("NFD",s or "") if unicodedata.category(c)!="Mn").lower()
+
           def classify(title, summary, link):
             s=norm(" ".join([title,summary,link]))
             if re.search(r"san patricio del chanar|el chanar|chanar digital|epea 3|epet 26|cef 10",s): return "Chañar"
-            if re.search(r"alto valle|villa regina|general roca|cipolletti|cinco saltos|centenario|anelo|plottier|vista alegre|barda del medio|contralmirante cordero",s): return "Cercanías"
+            if re.search(r"alto valle|villa regina|general roca|cipolletti|cinco saltos|centenario|anelo|plottier|vista alegre|barda del medio|contralmirante cordero|villa manzano",s): return "Cercanías"
             if re.search(r"neuquen|rio negro|patagonia|limay|collon cura|junin de los andes|san martin de los andes|zapala|andacollo|chubut|santa cruz|tierra del fuego",s): return "Patagonia"
             return "Argentina y mundo"
+
+          class ArticleLinks(HTMLParser):
+            def __init__(self):
+              super().__init__(); self.links=[]; self.href=None; self.parts=[]
+            def handle_starttag(self, tag, attrs):
+              if tag.lower()=="a":
+                attrs=dict(attrs); href=attrs.get("href","")
+                if "/articulo/" in href:
+                  self.href=href; self.parts=[]
+            def handle_data(self, data):
+              if self.href is not None: self.parts.append(data)
+            def handle_endtag(self, tag):
+              if tag.lower()=="a" and self.href is not None:
+                title=clean(" ".join(self.parts))
+                if title and len(title)>18: self.links.append((title,self.href))
+                self.href=None; self.parts=[]
+
+          class MetaParser(HTMLParser):
+            def __init__(self):
+              super().__init__(); self.meta={}
+            def handle_starttag(self, tag, attrs):
+              if tag.lower()=="meta":
+                a=dict(attrs); key=a.get("property") or a.get("name")
+                if key and a.get("content"): self.meta[key.lower()]=clean(a["content"])
+
           items=[]; seen=set()
           for category,source,url in FEEDS:
             try:
@@ -68,9 +97,9 @@ jobs:
               with urllib.request.urlopen(req,timeout=18) as response: root=ET.fromstring(response.read(2500000))
               for node in root.findall(".//item"):
                 title=clean(node.findtext("title")); link=(node.findtext("link") or "").strip(); summary=clean(node.findtext("description"))
-                if not title or not link.startswith("https://"): continue
+                if not title or not link.startswith("https://") or BLOCK.search(title) or BLOCK.search(summary): continue
                 key=hashlib.sha256(link.encode()).hexdigest()
-                if key in seen or BLOCK.search(title) or BLOCK.search(summary): continue
+                if key in seen: continue
                 seen.add(key)
                 try:
                   dt=parsedate_to_datetime(node.findtext("pubDate") or "")
@@ -79,11 +108,43 @@ jobs:
                 except Exception: date=""
                 summary=summary[:300].rsplit(" ",1)[0]+("…" if len(summary)>300 else "")
                 items.append({"id":key[:16],"title":title[:220],"summary":summary,"link":link,"date":date,"category":category,"source":source,"territory":classify(title,summary,link)})
-            except Exception as e: print("Fuente temporalmente no disponible:",url,type(e).__name__)
+            except Exception as e: print("RSS temporalmente no disponible:",url,type(e).__name__)
+
+          # Fuente local prioritaria. Solo se toman enlaces de artículos; no se copia el cuerpo.
+          try:
+            req=urllib.request.Request(LOCAL_HOME,headers={"User-Agent":"CorresponsalPublicLinkReader/1.0"})
+            with urllib.request.urlopen(req,timeout=18) as response: homepage=response.read(1800000).decode("utf-8","replace")
+            parser=ArticleLinks(); parser.feed(homepage)
+            local_seen=set()
+            for title,href in parser.links:
+              link=href if href.startswith("https://") else urllib.request.urljoin(LOCAL_HOME,href)
+              if not link.startswith("https://chanardigital.com.ar/articulo/"): continue
+              key=hashlib.sha256(link.encode()).hexdigest()
+              if key in local_seen or key in seen or BLOCK.search(title): continue
+              local_seen.add(key)
+              summary=""; date=""
+              try:
+                req=urllib.request.Request(link,headers={"User-Agent":"CorresponsalPublicLinkReader/1.0"})
+                with urllib.request.urlopen(req,timeout=12) as response: article=response.read(900000).decode("utf-8","replace")
+                meta=MetaParser(); meta.feed(article)
+                summary=meta.meta.get("og:description") or meta.meta.get("description") or ""
+                published=meta.meta.get("article:published_time") or meta.meta.get("date")
+                if published:
+                  try: date=datetime.fromisoformat(published.replace("Z","+00:00")).astimezone(timezone.utc).isoformat()
+                  except Exception: date=""
+              except Exception as e: print("Detalle local omitido:",type(e).__name__)
+              if BLOCK.search(summary): continue
+              seen.add(key)
+              items.append({"id":key[:16],"title":title[:220],"summary":summary[:300],"link":link,"date":date,"category":"Actualidad local","source":"Chañar Digital","territory":classify(title,summary,link)})
+              if len(local_seen)>=24: break
+            print("Enlaces locales revisados:",len(local_seen))
+          except Exception as e:
+            print("Fuente local temporalmente no disponible:",type(e).__name__)
+
           priority={"Chañar":0,"Cercanías":1,"Patagonia":2,"Argentina y mundo":3}
           items.sort(key=lambda x:x.get("date",""),reverse=True)
           items.sort(key=lambda x:priority.get(x["territory"],9))
-          OUT.write_text(json.dumps({"updated_at":datetime.now(timezone.utc).isoformat(),"editorial_rule":"Prioridad territorial: San Patricio del Chañar, cercanías, Patagonia, Argentina y mundo.","source_note":"Publicaciones resumidas con enlace a su fuente original. La automatización no sustituye la verificación humana.","items":items[:60]},ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+          OUT.write_text(json.dumps({"updated_at":datetime.now(timezone.utc).isoformat(),"editorial_rule":"Prioridad territorial: San Patricio del Chañar, cercanías, Patagonia, Argentina y mundo.","source_note":"Titulares y resúmenes breves enlazados a su origen. Filtros automáticos; no sustituyen la verificación humana.","items":items[:60]},ensure_ascii=False,indent=2)+"\\n",encoding="utf-8")
           print("Publicaciones recopiladas:",len(items))
           print("Distribución:",{r:sum(1 for x in items if x["territory"]==r) for r in priority})
 
