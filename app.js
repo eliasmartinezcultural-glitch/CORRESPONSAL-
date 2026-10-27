@@ -13,7 +13,7 @@
  function renderStory(item,compact=false){
   const title=esc(item.title||"Publicación sin título"),summary=esc(item.summary||"Consultá la publicación original para conocer los detalles."),source=esc(item.source||"Fuente original"),date=esc(dateLabel(item.date)),category=esc(item.category||"Información");
   const link=/^https:\/\//i.test(item.link||"")?esc(item.link):"#";
-  if(compact)return '<article class="story-row"><div><div class="story-kicker">'+category+' · '+source+'</div><h3>'+title+'</h3><p>'+summary+'</p></div><time class="story-meta">'+date+'</time></article>';
+  if(compact)return '<article class="story-row"><div><div class="story-kicker">'+category+' · '+source+'</div><h3>'+title+'</h3><p>'+summary+'</p><a class="story-source-link" href="'+link+'" target="_blank" rel="noopener noreferrer">Leer fuente ↗</a></div><time class="story-meta">'+date+'</time></article>';
   return '<article class="story-card"><div class="story-kicker">'+category+'</div><h3>'+title+'</h3><p>'+summary+'</p><div class="card-footer"><span>'+source+' · '+date+'</span><a href="'+link+'" target="_blank" rel="noopener noreferrer">Leer fuente ↗</a></div></article>';
  }
  function fallback(id,msg){byId(id).innerHTML='<div class="empty-note">'+esc(msg)+'</div>'}
