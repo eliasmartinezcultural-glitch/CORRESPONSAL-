@@ -83,7 +83,7 @@ jobs:
           priority={"Chañar":0,"Cercanías":1,"Patagonia":2,"Argentina y mundo":3}
           items.sort(key=lambda x:x.get("date",""),reverse=True)
           items.sort(key=lambda x:priority.get(x["territory"],9))
-          OUT.write_text(json.dumps({"updated_at":datetime.now(timezone.utc).isoformat(),"editorial_rule":"Prioridad territorial: San Patricio del Chañar, cercanías, Patagonia, Argentina y mundo.","source_note":"Publicaciones resumidas con enlace a su fuente original. La automatización no sustituye la verificación humana.","items":items[:60]},ensure_ascii=False,indent=2)+"\\n",encoding="utf-8")
+          OUT.write_text(json.dumps({"updated_at":datetime.now(timezone.utc).isoformat(),"editorial_rule":"Prioridad territorial: San Patricio del Chañar, cercanías, Patagonia, Argentina y mundo.","source_note":"Publicaciones resumidas con enlace a su fuente original. La automatización no sustituye la verificación humana.","items":items[:60]},ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
           print("Publicaciones recopiladas:",len(items))
           print("Distribución:",{r:sum(1 for x in items if x["territory"]==r) for r in priority})
 
