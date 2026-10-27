@@ -72,7 +72,7 @@ jobs:
             def handle_starttag(self, tag, attrs):
               if tag.lower()=="a":
                 attrs=dict(attrs); href=attrs.get("href","")
-                if "/articulo/" in href:
+                if "articulo/" in href:
                   self.href=href; self.parts=[]
             def handle_data(self, data):
               if self.href is not None: self.parts.append(data)
@@ -115,6 +115,7 @@ jobs:
             req=urllib.request.Request(LOCAL_HOME,headers={"User-Agent":"CorresponsalPublicLinkReader/1.0"})
             with urllib.request.urlopen(req,timeout=18) as response: homepage=response.read(1800000).decode("utf-8","replace")
             parser=ArticleLinks(); parser.feed(homepage)
+            print("Enlaces de artículos detectados en portada:",len(parser.links))
             local_seen=set()
             for title,href in parser.links:
               link=href if href.startswith("https://") else urllib.parse.urljoin(LOCAL_HOME,href)
